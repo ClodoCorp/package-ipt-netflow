@@ -1,8 +1,8 @@
 diff --git a/Makefile.in b/Makefile.in
-index 9ed236e..7709461 100644
+index e96d50b..c1e3a0b 100644
 --- a/Makefile.in
 +++ b/Makefile.in
-@@ -27,7 +27,7 @@ mclean:
+@@ -37,7 +37,7 @@ mclean:
  	make -C $(KDIR) M=$(CURDIR) clean
  lclean:
  	-rm -f *.so *_sh.o
@@ -10,4 +10,4 @@ index 9ed236e..7709461 100644
 +clean: lclean
  	-rm -f *.so *.o modules.order version.h
  
- %_sh.o: libipt_NETFLOW.c
+ snmp_NETFLOW.so: snmp_NETFLOW.c

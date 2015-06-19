@@ -1,0 +1,689 @@
+#!/usr/bin/ruby
+# Obeserve irq and softirq in top fashion
+# (c) 2014 <abc@telekom.ru>
+# License: GPL.
+
+require 'getoptlong'
+require 'curses'
+require 'stringio'
+
+@imode = :both
+@omode = :table
+@color = true
+@showrps = false
+
+GetoptLong.new(
+    ["--help",     "-h", GetoptLong::NO_ARGUMENT],
+    ["--batch",    "-b", GetoptLong::NO_ARGUMENT],
+    ["--delay",    "-d", GetoptLong::REQUIRED_ARGUMENT],
+    ["--top",      "-t", GetoptLong::NO_ARGUMENT],
+    ["--table",    "-x", GetoptLong::NO_ARGUMENT],
+    ["--soft",     "-s", GetoptLong::NO_ARGUMENT],
+    ["--softirq",        GetoptLong::NO_ARGUMENT],
+    ["--softirqs",       GetoptLong::NO_ARGUMENT],
+    ["--irq",      "-i", GetoptLong::NO_ARGUMENT],
+    ["--irqs",           GetoptLong::NO_ARGUMENT],
+    ["--reverse",  "-r", GetoptLong::NO_ARGUMENT],
+    ["--nocolor",  "-C", GetoptLong::NO_ARGUMENT],
+    ["--eth",      "-e", "--pps", GetoptLong::NO_ARGUMENT],
+    ["--rps",      "-R", "--xps", GetoptLong::NO_ARGUMENT]
+).each do |opt, arg|
+  case opt
+  when '--help'
+    puts " Shows interrupt rates (per second) per cpu."
+    puts " Also shows irq affinity ('.' for disabled cpus),"
+    puts " and rps/xps affinity ('+' rx, '-' tx, '*' tx/rx)."
+    puts " Can show packet rate per eth queue."
+    puts
+    puts " Usage: #{$0} [-h] [-d #{@delay}] [-b] [-t|-x] [-i|-s] [-r]"
+    puts "    -d  --delay=n  refresh interval"
+    puts "    -s  --softirq  select softirqs only"
+    puts "    -i  --irq      select hardware irqs only"
+    puts "    -e  --eth      show extra eth stats (from ethtool)"
+    puts "    -R  --rps      enable display of rps/xps"
+    puts "    -x  --table    output in table mode (default)"
+    puts "    -t  --top      output in flat top mode"
+    puts "    -b  --batch    output non-interactively"
+    puts "    -r  --reverse  reverse sort order"
+    puts "    -C  --nocolor  disable colors"
+    puts
+    puts " Rates marked as '.' is forbidden by smp_affinity mask."
+    exit 0
+  when '--reverse'
+    @reverse = !@reverse
+  when '--batch'
+    @batch = true
+    @reverse = !@reverse if @omode == :top
+  when '--delay'
+    @delay = arg.to_i
+  when '--top'
+    @omode = :top
+  when '--table'
+    @omode = :table
+  when /--irq/
+    @imode = :irq
+  when /--soft/
+    @imode = :soft
+  when /--pps/
+    @pps = true
+  when /--nocolor/
+    @color = false
+  when /--rps/
+    @showrps = !@showrps
+  end
+end
+if !@delay && ARGV[0].to_f > 0
+  @delay = ARGV.shift.to_f
+else
+  @delay = 5
+end
+@count = ARGV.shift.to_f if ARGV[0].to_i > 0
+
+def read_table(tag, file)
+  @cpus = []
+  lines = IO.readlines(file)
+  @cpus = lines[0].scan(/CPU\d+/)
+  @icpus = @cpus if tag == 'i'
+  lines[2..-1].each do |li|
+    irq, stat, desc = li.match(/^\s*(\S+):((?:\s+\d+)+)(.*)$/).captures
+    stat = stat.scan(/\d+/)
+    @irqs << [tag, irq, desc]
+    stat.each_with_index do |val, i|
+      # interruptsN, 's|i', irq'N', 'cpuX', 'descr...'
+      @stats << [val.to_i, tag, irq, @cpus[i], desc.strip]
+    end
+  end
+end
+
+def read_procstat
+  @cstat = {}
+  lines = IO.readlines("/proc/stat").grep(/^cpu\d+ /)
+  lines.each do |li|
+    c, *d = li.split(" ")
+    d = d.map {|e| e.to_i}
+    @cstat[c] = d
+  end
+end
+
+def read_affinity
+  @aff = {}
+  Dir.glob("/proc/irq/*/smp_affinity").each do |af|
+    irq = af[%r{\d+}].to_i
+    a = IO.read(af).strip.to_i(16)
+    @aff[irq] = a
+  end
+end
+
+# list ethernet devices
+def net_devices_pci
+  Dir['/sys/class/net/*'].reject do |f|
+    f += "/device" unless File.symlink?(f)
+    if File.symlink?(f)
+      !(File.readlink(f) =~ %r{devices/pci})
+    else
+      false
+    end
+  end.map {|f| File.basename(f)}
+end
+
+@devlist = net_devices_pci
+@devre = Regexp.union(@devlist)
+def get_rps(desc)
+  @rps = @xps = 0
+  return unless @showrps
+  return if @devlist.empty?
+  dev = desc[/\b(#{@devre})\b/, 1]
+  return unless dev
+  return unless desc =~ /-(tx|rx)+-\d+/i
+  qnr = desc[/-(\d+)\s*$/, 1]
+  return unless qnr
+  begin
+    @rps = IO.read("/sys/class/net/#{dev}/queues/rx-#{qnr}/rps_cpus").hex if desc =~ /rx/i
+    @xps = IO.read("/sys/class/net/#{dev}/queues/tx-#{qnr}/xps_cpus").hex if desc =~ /tx/i
+  rescue
+  end
+end
+
+def calc_rps(cpu)
+  m = 0
+  m |= 1 if @rps & (1 << cpu) != 0
+  m |= 2 if @xps & (1 << cpu) != 0
+  " +-*".slice(m, 1)
+end
+
+# ethtool -S eth0
+def ethtool_grab_stat(dev = nil)
+  unless dev
+    @esto = @est if @est
+    @est = Hash.new { |h,k| h[k] = Hash.new(&h.default_proc) }
+    @devlist = net_devices_pci
+    @devre = Regexp.union(@devlist)
+    # own time counter because this stat could be paused
+    @ehts = @ets if @ets
+    @ets = @ts
+    @edt = @ets - @ehts if @ehts
+    @devlist.each {|e| ethtool_grab_stat(e)}
+    return
+  end
+  h = Hash.new {|k,v| k[v] = Array.new}
+  t = `ethtool -S #{dev} 2>/dev/null`
+  return if t == ''
+  t.split("\n").map { |e|
+    e.split(':')
+  }.reject { |e|
+    !e[1]
+  }.each { |k,v|
+    k.strip!
+    v = v.strip.to_i
+    if k =~ /^.x_queue_(\d+)_/
+      t = k.split('_', 4)
+      qdir = t[0]
+      qnr  = t[2]
+      qk   = t[3]
+      @est[dev][qdir][qnr][qk] = v
+    else
+      @est[dev][k] = v
+    end
+  }
+end
+
+def e_queue_stat(dev, qdir, qnr, k)
+  n = @est[dev][qdir][qnr][k]
+  o = @esto[dev][qdir][qnr][k]
+  d = (n - o) / @edt
+  if d > 0
+    "%s:%d" % [qdir, d]
+  else
+    nil
+  end
+end
+
+def e_dev_stat(dev, k, ks)
+  n = @est[dev][k]
+  o = @esto[dev][k]
+  r = (n - o) / @edt
+  ks = k unless ks
+  "%s:%d" % [ks, r]
+end
+
+def e_queue_stat_err(dev, qdir, qnr)
+  r = []
+  ek = @est[dev][qdir][qnr].keys.reject{|e| e =~ /^(bytes|packets)$/}
+  ek.each do |k|
+    n = @est[dev][qdir][qnr][k]
+    o = @esto[dev][qdir][qnr][k]
+    d = n - o
+    r << "%s_%s:%d" % [qdir, k, d] if d.to_i > 0
+  end
+  r
+end
+
+# this is not rate
+def e_dev_stat_sum(dev, rk, ks)
+  ek = @est[dev].keys.reject{|ek| !(ek =~ rk)}
+  n = ek.inject(0) {|sum,k| sum += @est[dev][k].to_i}
+  o = ek.inject(0) {|sum,k| sum += @esto[dev][k].to_i rescue 0}
+  r = (n - o)
+  if r > 0
+    "%s:%d" % [ks, r]
+  else
+    nil
+  end
+end
+
+def print_ethstat(desc)
+  return if @devlist.empty?
+  dev = desc[/\b(#{@devre})\b/, 1]
+  return unless dev
+  unless @esto && @est
+    print ' []'
+    return
+  end
+  t = []
+  if desc =~ /-(tx|rx)+-\d+/i
+    qnr = desc[/-(\d+)\s*$/, 1]
+    if qnr
+      if desc =~ /rx/i
+	t << e_queue_stat(dev, "rx", qnr, "packets")
+	t += e_queue_stat_err(dev, "rx", qnr)
+      end
+      if desc =~ /tx/i
+	t << e_queue_stat(dev, "tx", qnr, "packets")
+	t += e_queue_stat_err(dev, "tx", qnr)
+      end
+    end
+  else
+    t << e_dev_stat(dev, "rx_packets", 'rx')
+    t << e_dev_stat(dev, "tx_packets", 'tx')
+    t << e_dev_stat_sum(dev, /_err/, 'err')
+    t << e_dev_stat_sum(dev, /_drop/, 'drop')
+  end
+  t.delete(nil)
+  print ' [' + t.join(' ') + ']'
+end
+
+def grab_stat
+  # @h[istorical]
+  @hstats = @stats
+  @hcstat = @cstat
+  @hts = @ts
+
+  @stats = []
+  @irqs = []
+  @ts = Time.now
+  @dt = @ts - @hts if @hts
+
+  read_table 'i', "/proc/interrupts"
+  read_table 's', "/proc/softirqs"
+  read_affinity
+  read_procstat
+  ethtool_grab_stat if @pps
+end
+
+def calc_speed
+  s = []
+  # calc speed
+  h = Hash.new(0)
+  @hstats.each do |v, t, i, c, d|
+    h[[t, i, c]] = v
+  end
+  # output
+  @h = {}
+  @t = Hash.new(0) # rate per cpu
+  @w = Hash.new(0) # irqs per irqN
+  @s = @stats.map do |v, t, i, c, d|
+    rate = (v - h[[t, i, c]]) / @dt
+    @t[c] += rate if t == 'i'
+    @w[[t, i]] += (v - h[[t, i, c]])
+    @h[[t, i, c]] = rate
+    [rate, v, t, i, c, d]
+  end
+end
+
+def calc_cpu
+  @cBusy  = Hash.new(0)
+  @cHIrq  = Hash.new(0)
+  @cSIrq  = Hash.new(0)
+  # user, nice, system, [3] idle, [4] iowait, irq, softirq, etc.
+  @cstat.each do |c, d|
+    d = d.zip(@hcstat[c]).map {|a, b| a - b}
+    c = c.upcase
+    sum = d.reduce(:+)
+    @cBusy[c] = 100 - (d[3] + d[4]).to_f / sum * 100
+    @cHIrq[c] = (d[5]).to_f / sum * 100
+    @cSIrq[c] = (d[6]).to_f / sum * 100
+  end
+end
+
+def show_top
+  @s.sort!.reverse!
+  @s.reverse! if @reverse
+  rej = nil
+  rej = 's' if @imode == :irq
+  rej = 'i' if @imode == :soft
+  @s.each do |s, v, t, i, c, d|
+    next if t == rej
+    if s > 0
+      print "%9.1f  %s  %s  <%s>  %s" % [s, c.downcase, t, i, d]
+      print_ethstat(d) if @pps
+      puts
+    end
+  end
+end
+
+@ifilter = {}
+def show_interrupts
+  maxlen = 7
+  @irqs.reverse! if @reverse
+  print "%s %*s  " % [" ", maxlen, " "]
+  @icpus.each { |c| print " %6s" % c }
+  puts
+
+  # load
+  print "%*s: " % [maxlen + 2, "cpuUtil"]
+  @icpus.each { |c| print " %6.1f" % @cBusy[c] }
+  puts "   total CPU utilization %"
+  #
+  print "%*s: " % [maxlen + 2, "%irq"]
+  @icpus.each { |c| print " %6.1f" % @cHIrq[c] }
+  puts "   hardware IRQ CPU util%"
+  print "%*s: " % [maxlen + 2, "%sirq"]
+  @icpus.each { |c| print " %6.1f" % @cSIrq[c] }
+  puts "   software IRQ CPU util%"
+
+  # total
+  print "%*s: " % [maxlen + 2, "irqTotal"]
+  @icpus.each { |c| print " %6d" % @t[c] }
+  puts "   total hardware IRQs"
+
+  rej = nil
+  rej = 's' if @imode == :irq
+  rej = 'i' if @imode == :soft
+  @irqs.each do |t, i, desc|
+    next if t == rej
+
+    # include incrementally and all eth
+    unless @ifilter[[t, i]] || @showall
+      next unless @w[[t, i]] > 0 || desc =~ /eth/
+      @ifilter[[t, i]] = true
+    end
+
+    print "%s %*s:  " % [t.to_s, maxlen, i.slice(0, maxlen)]
+    rps = get_rps(desc)
+    @icpus.each do |c|
+      cpu = c[/\d+/].to_i
+      aff = @aff[i.to_i]
+      off = ((aff & 1 << cpu) ==0)? true : false if aff
+      fla = calc_rps(cpu)
+      begin
+	v = @h[[t, i, c]]
+	if v > 0 || !off
+	  print "%6d%c" % [v, fla]
+	elsif aff
+	  print "%6s%c" % [".", fla]
+	end
+      rescue
+      end
+    end
+    print desc
+    print_ethstat(desc) if @pps
+    puts
+  end
+end
+
+def select_output
+  if @omode == :top
+    show_top
+  else
+    show_interrupts
+  end
+end
+
+def curses_choplines(text)
+  cols = Curses.cols - 1
+  rows = Curses.lines - 2
+  lines = text.split("\n").map {|e| e.slice(0, cols)}.slice(0, rows)
+  text = lines.join("\n")
+  text << "\n" * (rows - lines.size) if lines.size < rows
+  text
+end
+
+def show_help
+  puts "irqtop help:"
+  puts
+  puts "  In table view, cells marked with '.' mean this hw irq is"
+  puts "     disabled via /proc/irq/<irq>/smp_affinity"
+  puts "  Interactive keys:"
+  puts "    i     Toggle (hardware) irqs view"
+  puts "    s     Toggle software irqs (softirqs) view"
+  puts "    e     Show eth stat per queue"
+  puts "    R     Show rps/xps affinity"
+  puts "    t     Flat top display mode"
+  puts "    x     Table display mode"
+  puts "    r     Reverse rows order"
+  puts "    c     Toggle colors (for eth)"
+  puts "    a     Show lines with zero rate (all)"
+  puts "    A     Clear lines with zero rates"
+  puts "    .     Pause screen updating"
+  puts "    h,?   This help screen"
+  puts "    q     Quit."
+  puts "  Any other key will update display."
+  puts
+  puts "Press any key to continue."
+end
+
+hostname = `hostname`.strip
+#
+grab_stat
+sleep 0.5
+
+COLOR_GREEN  = "\033[0;32m"
+COLOR_YELLOW = "\033[0;33m"
+COLOR_CYAN   = "\033[0;36m"
+COLOR_RED    = "\033[0;31m"
+COLOR_OFF    = "\033[m"
+def tty_printline(t)
+  latr = nil # line color
+  if t =~ /-rx-/
+    latr = COLOR_GREEN
+  elsif t =~ /-tx-/
+    latr = COLOR_YELLOW
+  elsif t =~ /\beth/
+    latr = COLOR_CYAN
+  end
+  print latr if latr
+
+  if t =~ /cpuUtil:|irq:|sirq:/
+    # colorize percentage values
+    t.scan(/\s+\S+/) do |e|
+      eatr = nil
+      if e =~ /^\s*[\d.]+$/
+        if e.to_i >= 90
+          eatr = COLOR_RED
+        elsif e.to_i <= 10
+          eatr = COLOR_GREEN
+        else
+          eatr = COLOR_YELLOW
+        end
+      end
+      print eatr if eatr
+      print e
+      print (latr)? latr : COLOR_OFF if eatr
+    end
+  elsif latr && t =~ / \[[^\]]+\]$/
+    # colorize eth stats
+    print $`
+    print COLOR_OFF if latr
+    $&.scan(/(.*?)(\w+)(:)(\d+)/) do |e|
+      eatr = nil
+      case e[1]
+      when 'rx'
+	eatr = COLOR_GREEN
+      when 'tx'
+	eatr = COLOR_YELLOW
+      else
+	eatr = COLOR_RED
+      end
+      eatr = nil if e[3].to_i == 0
+
+      print e[0]
+      print eatr if eatr
+      print e[1..-1].join
+      print (latr)? latr : COLOR_OFF if eatr
+    end
+    print $'
+  else
+    print t
+  end
+
+  print COLOR_OFF if latr
+  puts
+end
+def tty_output
+  if @color
+    $stdout = StringIO.new
+    yield
+    $stdout.rewind
+    txt = $stdout.read
+    $stdout = STDOUT
+
+    txt.split("\n", -1).each do |li|
+      tty_printline(li)
+    end
+  else
+    yield
+  end
+end
+
+if @batch
+  @color = @color && $stdout.tty?
+  loop do
+    grab_stat
+    calc_speed
+    calc_cpu
+    puts "#{hostname} - irqtop - #{Time.now}"
+    tty_output {
+      select_output
+    }
+    $stdout.flush
+    break if @count && (@count -= 1) == 0
+    sleep @delay
+  end
+  exit 0
+end
+
+Curses.init_screen
+Curses.start_color
+Curses.cbreak
+Curses.noecho
+Curses.nonl
+Curses.init_pair(1, Curses::COLOR_GREEN,  Curses::COLOR_BLACK);
+Curses.init_pair(2, Curses::COLOR_YELLOW, Curses::COLOR_BLACK);
+Curses.init_pair(3, Curses::COLOR_CYAN,   Curses::COLOR_BLACK);
+Curses.init_pair(4, Curses::COLOR_RED,    Curses::COLOR_BLACK);
+$stdscr = Curses.stdscr
+$stdscr.keypad(true)
+
+def curses_printline(t)
+  latr = nil # line color
+  if t =~ /-rx-/
+    latr = Curses.color_pair(1)
+  elsif t =~ /-tx-/
+    latr = Curses.color_pair(2)
+  elsif t =~ /\beth/
+    latr = Curses.color_pair(3)
+  end
+  $stdscr.attron(latr)  if latr
+
+  if t =~ /cpuUtil:|irq:|sirq:/
+    # colorize percentage values
+    t.scan(/\s+\S+/) do |e|
+      eatr = nil
+      if e =~ /^\s*[\d.]+$/
+	if e.to_i >= 90
+	  eatr = Curses.color_pair(4)
+	elsif e.to_i <= 10
+	  eatr = Curses.color_pair(1)
+	else
+	  eatr = Curses.color_pair(2)
+	end
+      end
+      $stdscr.attron(eatr)  if eatr
+      $stdscr.addstr("#{e}")
+      $stdscr.attroff(eatr) if eatr
+    end
+  elsif latr && t =~ / \[[^\]]+\]$/
+    # colorize eth stats
+    $stdscr.addstr($`)
+    $stdscr.attroff(latr) if latr
+    $&.scan(/(.*?)(\w+)(:)(\d+)/) do |e|
+      eatr = nil
+      case e[1]
+      when 'rx'
+	eatr = Curses.color_pair(1)
+      when 'tx'
+	eatr = Curses.color_pair(2)
+      else
+	eatr = Curses.color_pair(4)
+      end
+      eatr = nil if e[3].to_i == 0
+
+      $stdscr.addstr(e[0])
+      $stdscr.attron(eatr)  if eatr
+      $stdscr.addstr(e[1..-1].join)
+      $stdscr.attroff(eatr) if eatr
+    end
+    $stdscr.addstr($' + "\n")
+  else
+    $stdscr.addstr("#{t}\n")
+  end
+
+  $stdscr.attroff(latr) if latr
+end
+
+def curses_output
+  $stdout = StringIO.new
+  yield
+  $stdout.rewind
+  text = $stdout.read
+  $stdout = STDOUT
+  txt = curses_choplines(text)
+  if @color
+    txt.split("\n", -1).each_with_index do |li, i|
+      $stdscr.setpos(i, 0)
+      curses_printline(li)
+    end
+  else
+    $stdscr.setpos(0, 0)
+    $stdscr.addstr(txt)
+  end
+  $stdscr.setpos(1, 0)
+  Curses.refresh
+end
+
+def curses_enter(text, echo = true)
+  $stdscr.setpos(1, 0)
+  $stdscr.addstr(text + "\n")
+  $stdscr.setpos(1, 0)
+  Curses.attron(Curses::A_BOLD)
+  $stdscr.addstr(text)
+  Curses.attroff(Curses::A_BOLD)
+  Curses.refresh
+  Curses.echo if echo
+  Curses.timeout = -1
+  line = Curses.getstr
+  Curses.noecho
+  line
+end
+
+loop do
+  grab_stat
+  calc_speed
+  calc_cpu
+
+  curses_output {
+   puts "#{hostname} - irqtop - #{Time.now}"
+   select_output
+  }
+
+  Curses.timeout = @delay * 1000
+  ch = Curses.getch.chr rescue nil
+  case ch
+  when "\f"
+    Curses.clear
+  when "q", "Z", "z"
+    break
+  when 'i'
+    @imode = (@imode == :both)? :soft : :both
+  when 's'
+    @imode = (@imode == :both)? :irq : :both
+  when 't'
+    @omode = (@omode == :top)? :table : :top
+  when 'x'
+    @omode = (@omode == :table)? :top : :table
+  when 'e', 'p'
+    @pps = !@pps
+  when 'r'
+    @reverse = !@reverse
+  when 'c'
+    @color = !@color
+  when 'A'
+    @ifilter = {}
+  when 'a'
+    @ifilter = {}
+    @showall = !@showall
+  when 'R'
+    @showrps = !@showrps
+  when '.'
+    curses_enter("Pause, press enter to to continue: ", false)
+  when 'd'
+    d = curses_enter("Enter display interval: ")
+    @delay = d.to_f if d.to_f > 0
+  when 'h', '?'
+    curses_output { show_help }
+    Curses.timeout = -1
+    ch = Curses.getch.chr rescue nil
+    break if ch == 'q'
+  end
+end
+

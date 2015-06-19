@@ -1,0 +1,37 @@
+diff --git a/Makefile.in b/Makefile.in
+index 9ed236e..64db6e7 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -11,11 +11,11 @@ IPTABLES_MODULES = @IPTABLES_MODULES@
+ obj-m = ipt_NETFLOW.o
+ 
+ all: ipt_NETFLOW.ko libipt_NETFLOW.so libip6t_NETFLOW.so
+-ipt_NETFLOW.ko: version.h ipt_NETFLOW.c ipt_NETFLOW.h Makefile
++ipt_NETFLOW.ko: version.h ipt_NETFLOW.c ipt_NETFLOW.h
+ 	@echo Compiling for kernel $(KVERSION)
+ 	make -C $(KDIR) M=$(CURDIR) modules
+ 	@touch $@
+-sparse: | version.h ipt_NETFLOW.c ipt_NETFLOW.h Makefile
++sparse: | version.h ipt_NETFLOW.c ipt_NETFLOW.h
+ 	@rm -f ipt_NETFLOW.ko ipt_NETFLOW.o
+ 	@echo Compiling for kernel $(KVERSION)
+ 	make -C $(KDIR) M=$(CURDIR) modules C=1
+@@ -36,7 +36,7 @@ clean: mclean lclean
+ %.so: %_sh.o
+ 	gcc -shared -o $@ $<
+ 
+-version.h: ipt_NETFLOW.c ipt_NETFLOW.h Makefile
++version.h: ipt_NETFLOW.c ipt_NETFLOW.h
+ 	@if [ -d .git ] && type git >/dev/null 2>&1; then \
+ 		 echo "#define GITVERSION \"`git describe --dirty`\""; \
+ 	fi > version.h
+@@ -52,9 +52,6 @@ uninstall:
+ 	-rm -f $(DESTDIR)$(IPTABLES_MODULES)/libip6t_NETFLOW.so
+ 	-rm -f $(DESTDIR)$(KINSTDIR)/extra/ipt_NETFLOW.ko
+ 
+-Makefile: Makefile.in configure
+-	./configure --make
+-
+ load: all
+ 	-insmod ipt_NETFLOW.ko active_timeout=5 protocol=9
+ 	-iptables -I OUTPUT -j NETFLOW

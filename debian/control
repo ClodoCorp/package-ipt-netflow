@@ -1,0 +1,33 @@
+Source: ipt-netflow
+Section: net
+Priority: extra
+Maintainer: SpiderX <spiderx@spiderx.dp.ua>
+Build-Depends: quilt (>= 0.46), debhelper (>= 7.0.50~), autotools-dev, iptables-dev, dkms, pkg-config
+Standards-Version: 3.9.3
+Homepage: http://sourceforge.net/projects/ipt-netflow/
+#Vcs-git: git://ipt-netflow.git.sourceforge.net/gitroot/ipt-netflow/ipt-netflow
+#Vcs-Browser: http://ipt-netflow.git.sourceforge.net/
+
+Package: ipt-netflow
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ipt-netflow-dkms (= ${source:Version})
+Description: iptables target to send traffic statistics via NetFlow
+ ipt-netflow provides iptables target NETFLOW, which gather flow
+ statistics and send it via UDP to specified NetFlow collector.
+ Because of running inside a kernel space, ipt-netflow is
+ extremely fast.
+ .
+ This package contains userspace iptables helper library.
+
+Package: ipt-netflow-dkms
+Architecture: all
+Depends: ${misc:Depends}
+Enhances: ipt-netflow
+Description: iptables target to send traffic statistics via NetFlow
+ ipt-netflow provides iptables target NETFLOW, which gather flow
+ statistics and send it via UDP to specified NetFlow collector.
+ Because of running inside a kernel space, ipt-netflow is
+ extremely fast.
+ .
+ This package contains ipt-netflow kernel module sources to be
+ compiled with DKMS.

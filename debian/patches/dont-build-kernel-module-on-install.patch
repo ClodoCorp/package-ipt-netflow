@@ -1,0 +1,13 @@
+diff --git a/Makefile.in b/Makefile.in
+index 9ed236e..7709461 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -27,7 +27,7 @@ mclean:
+ 	make -C $(KDIR) M=$(CURDIR) clean
+ lclean:
+ 	-rm -f *.so *_sh.o
+-clean: mclean lclean
++clean: lclean
+ 	-rm -f *.so *.o modules.order version.h
+ 
+ %_sh.o: libipt_NETFLOW.c

@@ -1,0 +1,13 @@
+diff --git a/Makefile.in b/Makefile.in
+index 9ed236e..ee0f715 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -1,7 +1,6 @@
+ # Edit Makefile.in and run ./configure
+ 
+-KVERSION = @KVERSION@
+-KDIR = @KDIR@
++KDIR = /lib/modules/$(KVERSION)/build
+ KINSTDIR = $(shell dirname @KDIR@)
+ IPTABLES_CFLAGS = @IPTABLES_CFLAGS@
+ IPTABLES_MODULES = @IPTABLES_MODULES@

@@ -1,0 +1,23 @@
+diff --git a/configure b/configure
+index 3f10e2a..a91c552 100755
+--- a/configure
++++ b/configure
+@@ -353,13 +353,13 @@ kernel_check_config() {
+   kconfig CONFIG_IP6_NF_IPTABLES	"ip6tables target"
+ }
+ 
+-kernel_find_version	#KVERSION
+-test "$KLIBMOD" || KLIBMOD=$KVERSION
++#kernel_find_version	#KVERSION
++#test "$KLIBMOD" || KLIBMOD=$KVERSION
+ echo "Kernel version: $KVERSION ($KHOW)"
+-kernel_find_source	#KDIR
++#kernel_find_source	#KDIR
+ echo "Kernel sources: $KDIR ($KSHOW)"
+-kernel_check_consistency
+-kernel_check_config
++#kernel_check_consistency
++#kernel_check_config
+ 
+ test "$IPTBIN" || IPTBIN=`which iptables`
+ 

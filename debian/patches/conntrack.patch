@@ -1,0 +1,12 @@
+diff --git a/ipt_NETFLOW.c b/ipt_NETFLOW.c
+index 68715d3..ad9a853 100644
+--- a/ipt_NETFLOW.c
++++ b/ipt_NETFLOW.c
+@@ -19,6 +19,7 @@
+  */
+ 
+ #include <linux/module.h>
++#undef CONFIG_NF_NAT_NEEDED
+ #include <linux/skbuff.h>
+ #include <linux/proc_fs.h>
+ #include <linux/vmalloc.h>

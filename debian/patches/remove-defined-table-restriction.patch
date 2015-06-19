@@ -1,0 +1,40 @@
+--- a/ipt_NETFLOW.c
++++ b/ipt_NETFLOW.c
+@@ -1327,17 +1327,17 @@ static struct ipt_target ipt_netflow_reg
+ 	.name		= "NETFLOW",
+ 	.target		= netflow_target,
+ 	.family		= AF_INET,
+-#ifndef RAW_PROMISC_HACK
+-	.table		= "filter",
+-#ifndef NF_IP_LOCAL_IN /* 2.6.25 */
+-	.hooks		= (1 << NF_INET_LOCAL_IN) | (1 << NF_INET_FORWARD) |
+-				(1 << NF_INET_LOCAL_OUT),
+-#else
+-	.hooks		= (1 << NF_IP_LOCAL_IN) | (1 << NF_IP_FORWARD) |
+-				(1 << NF_IP_LOCAL_OUT),
+-#endif /* NF_IP_LOCAL_IN */
+-#else
+-	.table          = "raw",
++//#ifndef RAW_PROMISC_HACK
++//	.table		= "filter",
++//#ifndef NF_IP_LOCAL_IN /* 2.6.25 */
++//	.hooks		= (1 << NF_INET_LOCAL_IN) | (1 << NF_INET_FORWARD) |
++//				(1 << NF_INET_LOCAL_OUT),
++//#else
++//	.hooks		= (1 << NF_IP_LOCAL_IN) | (1 << NF_IP_FORWARD) |
++//				(1 << NF_IP_LOCAL_OUT),
++//#endif /* NF_IP_LOCAL_IN */
++//#else
++//	.table          = "raw",
+ #ifndef NF_IP_LOCAL_IN
+ 	.hooks          = (1 << NF_INET_LOCAL_IN) | (1 << NF_INET_FORWARD) |
+ 				(1 << NF_INET_LOCAL_OUT) | (1 << NF_INET_PRE_ROUTING),
+@@ -1345,7 +1345,7 @@ static struct ipt_target ipt_netflow_reg
+ 	.hooks          = (1 << NF_IP_LOCAL_IN) | (1 << NF_IP_FORWARD) |
+ 				(1 << NF_IP_LOCAL_OUT) | (1 << NF_IP_PRE_ROUTING),
+ #endif /* NF_IP_LOCAL_IN */
+-#endif /* !RAW_PROMISC_HACK */
++//#endif /* !RAW_PROMISC_HACK */
+ 	.me		= THIS_MODULE
+ };
+ 

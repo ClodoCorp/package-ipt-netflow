@@ -263,7 +263,6 @@ show_help() {
   echo "  --kver=..     kernel version (ex.: 2.6.30-std-def-alt15)"
   echo "  --kdir=..     directory for kernel source (ex.: /usr/src/kernel)"
   echo "  --enable-natevents     enables natevents support"
-  echo "  --enable-debugfs       enables debugfs support for flow lists"
   echo "  --enable-snmp-rules    enables SNMP-index conversion rules"
   echo "  --enable-macaddress    enables MAC address for v9/IPFIX"
   echo "  --enable-vlan          enables VLAN Ids for v9/IPFIX"
@@ -271,7 +270,11 @@ show_help() {
   echo "  --enable-sampler       enables Flow Sampling"
   echo "  --enable-sampler=hash  enables Hash sampler"
   echo "  --enable-aggregation   enables aggregation rules"
-  echo "  --enable-promisc       enables promisc hack"
+  echo "  --enable-promisc       enables promisc hack mode"
+  echo "  --promisc-mpls         decapsulate MPLS in promisc mode"
+  echo "  --promisc-mpls=N       -- and record N labels (default 3)"
+  echo "  --enable-physdev       enables physdev reporting"
+  echo "  --enable-physdev-override      to override interfaces"
   echo "  --disable-snmp-agent   disables net-snmp agent"
   echo "  --disable-dkms         disables DKMS support completely"
   echo "  --disable-dkms-install  no DKMS install but still create dkms.conf"
@@ -295,15 +298,17 @@ do
     --kver=*)  KVERSION="$ac_optarg" ;;
     --kdir=*)      KDIR="$ac_optarg" ;;
     --enable-nat*)   KOPTS="$KOPTS -DENABLE_NAT" ;;
-    --enable-debug*) KOPTS="$KOPTS -DENABLE_DEBUGFS" ;;
     --enable-mac*)   KOPTS="$KOPTS -DENABLE_MAC" ;;
     --enable-vlan*)  KOPTS="$KOPTS -DENABLE_VLAN" ;;
     --enable-direc*) KOPTS="$KOPTS -DENABLE_DIRECTION" ;;
     --enable-sampl*hash) KOPTS="$KOPTS -DENABLE_SAMPLER -DSAMPLING_HASH" ;;
     --enable-sampl*) KOPTS="$KOPTS -DENABLE_SAMPLER" ;;
     --enable-aggr*)  KOPTS="$KOPTS -DENABLE_AGGR" ;;
-    --enable-promi*) KOPTS="$KOPTS -DENABLE_PROMISC" ;;
+    --enable-promi*)   ENABLE_PROMISC=1 ;;
+    --promisc-mpls*)   ENABLE_PROMISC=1; PROMISC_MPLS=1; MPLS_DEPTH="$ac_optarg" ;;
     --enable-snmp-r*)  KOPTS="$KOPTS -DENABLE_SNMP" ;;
+    --enable-physdev)       KOPTS="$KOPTS -DENABLE_PHYSDEV" ;;
+    --enable-physdev-over*) KOPTS="$KOPTS -DENABLE_PHYSDEV_OVER" ;;
     --disable-snmp-a*)   SKIPSNMP=1 ;;
     --disable-net-snmp*) SKIPSNMP=1 ;;
     --disable-dkms*)     SKIPDKMS=1 ;;
@@ -315,6 +320,18 @@ do
 #    *) ni="$ni $ac_option" ;;
   esac
 done
+
+if [ "$ENABLE_PROMISC" = 1 ]; then KOPTS="$KOPTS -DENABLE_PROMISC"; fi
+if [ "$PROMISC_MPLS" = 1 ]; then
+  KOPTS="$KOPTS -DPROMISC_MPLS"
+  if [ "$MPLS_DEPTH" -gt 10 ]; then
+    echo "! Requested MPLS stack depth is too big, limiting to 10."
+    MPLS_DEPTH=10;
+  elif [ ! "$MPLS_DEPTH" ]; then
+    MPLS_DEPTH=3
+  fi
+  if [ "$MPLS_DEPTH" -ge 1 ]; then KOPTS="$KOPTS -DMPLS_DEPTH=$MPLS_DEPTH"; fi
+fi
 
 kernel_find_version() {
   KHOW=requested

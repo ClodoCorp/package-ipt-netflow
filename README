@@ -39,9 +39,9 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
      Such as metering, exporting, sampling stat and reliability stat, sampling 
      configuration, network devices ifName, ifDescr list.
 
-   * Tested to compile and work out of the box on Centos 5, 6, 7, and Debian.
-     Many vanilla Linux kernels since 2.6.18 up to the latest (as of writing
-     is 3.16) are supported and tested.
+   * Tested to compile and work out of the box on Centos 5, 6, 7, Debian and
+   * Ubuntu. Many vanilla Linux kernels since 2.6.18 up to the latest (as of
+   * writing is 3.19) are supported and tested.
 
    * Module load time and run-time (via sysctl) configuration.
 
@@ -52,7 +52,8 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
    * SNMP-index translation rules, let convert meaningless and unstable
      interface indexes (ifIndex) to more meaningful numbering scheme.
 
-   * Easy support for catching mirrored traffic with promisc option.
+   * Easy support for catching mirrored traffic with promisc option. Which is
+     also supporting optional MPLS decapsulation and MPLS-aware NetFlow.
 
 
 ============================
@@ -79,7 +80,7 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
 
       ~# yum install kernel-devel
 
-   b) What to do for Debian:
+   b) What to do for Debian and Ubuntu:
 
       ~# apt-get install module-assistant
       ~# m-a prepare
@@ -118,7 +119,7 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
 
       # yum install iptables-devel
 
-   b) What to do for Debian:
+   b) What to do for Debian or Ubuntu:
 
       # apt-get install iptables-dev pkg-config
 
@@ -134,7 +135,7 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
 
       # yum install net-snmp net-snmp-devel
 
-  b) For Debian:
+  b) For Debian or Ubuntu:
 
       # apt-get install snmpd libsnmp-dev
 
@@ -226,6 +227,25 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
      --disable-dkms-install
          only disable auto-install into DKMS, but still create dkms.conf, in
          case you will want to install it manually.
+
+     --enable-physdev
+	 Export ingressPhysicalInterface(252) and egressPhysicalInterface(253)
+	 (relevant for bridges) in V9 and IPFIX. If your collector does not
+	 support these Elements but you still need physdevs then use
+	 --enable-physdev-override, in that case physdevs will override normal
+	 interface numbers ingressInterface(10) and egressInterface(14).
+
+     --enable-promisc
+	 Enables capturing of promiscuous packets into raw/PREROUTING chain.
+	 See README.promisc Solution 1 for usage details and example.
+
+     --promisc-mpls
+	 Enables MPLS label stack decapsulation for promiscuous packets. (For
+	 IPv4 and IPv6 packets only). This also enables MPLS-aware NetFlow (v9
+	 and IPFIX), you may wish to specify with --promisc-mpls=n how much MPLS
+	 labels you want to be recorded and exported (default is 3, maximum is
+	 10, set to 0 to not report anything).
+
 
 ===========
 = RUNNING =
@@ -381,9 +401,14 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
        because NetFlow v5 isn't compatible with IPv6.
 
    destination=127.0.0.1:2055
-     - where to export netflow, to this ip address
-       You will see this connection in netstat like this:
+     - where to export netflow, to this ip address. Port is optional, default
+       is 2055. You will see this connection in netstat like this:
+
        udp 0 0 127.0.0.1:32772 127.0.0.1:2055 ESTABLISHED 
+
+   destination=[2001:db8::1]:2055
+     - export target using IPv6 address. Brackets are optional, but otherwise
+       you should delimit port with 'p' or '#' character.
 
    destination=127.0.0.1:2055,192.0.0.1:2055
      - mirror flows to two (can be more) addresses, separate addresses
@@ -523,13 +548,25 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
        snmp-rules are compilation disabled by default, to enable you will need
        to add --enable-snmp option to ./configure script.
 
-   scan-min = 1
+   scan-min=1
      - Minimal interval between flow export scans. Sometimes could be useful
        to reduce load on exporting CPU by increasing this interval. Value are
        in kernel jiffies units (which is x/HZ seconds).
 
-   promisc = 1
-     - Enable promisc hack. See README.promisc Solution.1 for details.
+   promisc=1
+     - Enables promisc hack. See README.promisc Solution 1 for details.
+
+   exportcpu=number
+     - Lock exporter to single CPU. This may be useful to fine control CPU
+       load. Common use case: with smp_affinity and RSS you spread packet
+       processing to all CPUs except one, and lock it to the exporter. While
+       exporter CPU load generally is not high, for someone it may be not
+       desirable to combine it with packet processing on very highly loaded
+       routers.
+
+       This option also could be changed at runtime with: 
+
+         # echo number > /sys/module/ipt_NETFLOW/parameters/exportcpu
 
 
 ====================
@@ -722,16 +759,25 @@ ipt_NETFLOW linux 2.6.x-3.x kernel module by <abc@telekom.ru> -- 2008-2015.
      IP TOS:                     ipClassOfService(5),
      and address family (IP or IPv6).
 
-  If VLAN exporting is enabled:
+  Additional Flow Keys if VLAN exporting is enabled:
+
      First (outer) dot1q VLAN tag: dot1qVlanId(243) and
                                  dot1qPriority(244) for IPFIX,
                                  or vlanId(243) for NetFlow v9.
      Second (customer) dot1q VLAN tag: dot1qCustomerVlanId(245)
                                  and dot1qCustomerPriority(246).
 
-  If MAC address exporting is enabled:
+  Additional Flow Keys if MAC address exporting is enabled:
+
      Destination MAC address:    destinationMacAddress(80),
      Source MAC address:         sourceMacAddress(56).
+
+  Additional Flow Keys if MPLS-aware NetFlow is enabled:
+
+     Captured MPLS stack is fully treated as flow key (including TTL values),
+     which is Elements from mplsTopLabelStackSection(70) to
+     mplsLabelStackSection10(79), and, if present, mplsTopLabelTTL(200).
+
 
   Other Elements are not Flow Keys. Note that outer interface, which is
   egressInterface(14), is not regarded as Flow Key. Quoting RFC 7012: "For

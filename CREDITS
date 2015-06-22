@@ -48,6 +48,12 @@ Principal author and project maintainer:
    ABC <abc@telekom.ru> [2008-2015]
 
 
+Compatibility layer is using code from Linux Kernel and should be
+attributed to respective Linux developers.
+
+MurmurHash3 is based on smhasher (2012) of Austin Appleby.
+
+
 Patch authors and submitters:
 
    Ilya Evseev [2010]
@@ -82,6 +88,7 @@ Extensive testing and other help:
    Andrew Savin @ Starlink [2014]
    Alexander Zakharov @ WAW Technologies [2015]
    Ivanov Eduard [2015]
+   Maciej Zdeb [2015]
 
 
 (Send your names, emails, or nicks to add to the list.)

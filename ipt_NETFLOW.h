@@ -16,8 +16,8 @@
  *
  */
 
-#ifndef _IP_NETFLOW_H
-#define _IP_NETFLOW_H
+#ifndef _IPT_NETFLOW_H
+#define _IPT_NETFLOW_H
 
 /*
  * Some tech info:
@@ -113,9 +113,20 @@ struct netflow5_pdu {
 	two(61,  DIRECTION, flowDirection, 1) \
 	two(62,  IPV6_NEXT_HOP, ipNextHopIPv6Address, 16) \
 	two(64,  IPV6_OPTION_HEADERS, ipv6ExtensionHeaders, 2) \
+	two(70,  MPLS_LABEL_1,  mplsTopLabelStackSection, 3) \
+	two(71,  MPLS_LABEL_2,  mplsLabelStackSection2,   3) \
+	two(72,  MPLS_LABEL_3,  mplsLabelStackSection3,   3) \
+	two(73,  MPLS_LABEL_4,  mplsLabelStackSection4,   3) \
+	two(74,  MPLS_LABEL_5,  mplsLabelStackSection5,   3) \
+	two(75,  MPLS_LABEL_6,  mplsLabelStackSection6,   3) \
+	two(76,  MPLS_LABEL_7,  mplsLabelStackSection7,   3) \
+	two(77,  MPLS_LABEL_8,  mplsLabelStackSection8,   3) \
+	two(78,  MPLS_LABEL_9,  mplsLabelStackSection9,   3) \
+	two(79,  MPLS_LABEL_10, mplsLabelStackSection10,  3) \
 	one(80,  destinationMacAddress, 6) \
 	two(82,  IF_NAME, interfaceName, IF_NAME_SZ) \
 	two(83,  IF_DESC, interfaceDescription, IF_DESC_SZ) \
+	one(136, flowEndReason, 1) \
 	one(138, observationPointId, 4) \
 	one(139, icmpTypeCodeIPv6, 2) \
 	one(141, LineCardId, 4) \
@@ -135,6 +146,9 @@ struct netflow5_pdu {
 	one(166, notSentFlowTotalCount, 8) \
 	one(167, notSentPacketTotalCount, 8) \
 	one(168, notSentOctetTotalCount, 8) \
+	one(200, mplsTopLabelTTL, 1) \
+	one(201, mplsLabelStackLength, 1) \
+	one(202, mplsLabelStackDepth, 1) \
 	one(208, ipv4Options, 4) \
 	one(209, tcpOptions, 4) \
 	one(225, postNATSourceIPv4Address, 4) \
@@ -146,6 +160,8 @@ struct netflow5_pdu {
 	one(244, dot1qPriority, 1) \
 	one(245, dot1qCustomerVlanId, 2) \
 	one(246, dot1qCustomerPriority, 1) \
+	one(252, ingressPhysicalInterface, 2) \
+	one(253, egressPhysicalInterface, 2) \
 	one(256, ethernetType, 2) \
 	one(295, IPSecSPI, 4) \
 	one(300, observationDomainName, 128) \
@@ -240,18 +256,10 @@ struct ipfix_pdu {
  * not searchable and will be exported soon. */
 #define FLOW_FULL_WATERMARK 0xffefffff
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,25)
-union nf_inet_addr {
-	__be32          ip;
-	__be32          ip6[4];
-	struct in_addr  in;
-	struct in6_addr in6;
-};
-#endif
-
 #define EXTRACT_SPI(tuple)	((tuple.s_port << 16) | tuple.d_port)
 #define SAVE_SPI(tuple, spi)	{ tuple.s_port = spi >> 16; \
 				  tuple.d_port = spi; }
+#define MAX_VLAN_TAGS	2
 
 /* hashed data which identify unique flow */
 /* 16+16 + 2+2 + 2+1+1+1 = 41 */
@@ -260,10 +268,12 @@ struct ipt_netflow_tuple {
 	union nf_inet_addr dst;
 	__be16		s_port; // Network byte order
 	__be16		d_port; // -"-
+#ifdef MPLS_DEPTH
+	__be32		mpls[MPLS_DEPTH]; /* Network byte order */
+#endif
 	__u16		i_ifc;	// Host byte order
 #ifdef ENABLE_VLAN
-	__be16		tag1;	// Network byte order (outer tag)
-	__be16		tag2;	// -"-
+	__be16		tag[MAX_VLAN_TAGS]; // Network byte order (outer tag first)
 #endif
 	__u8		protocol;
 	__u8		tos;
@@ -287,13 +297,18 @@ struct ipt_netflow {
 	__be16		ethernetType; /* Network byte order */
 #endif
 	__u16		o_ifc;
+#ifdef ENABLE_PHYSDEV
+	__u16		i_ifphys;
+	__u16		o_ifphys;
+#endif
 #ifdef SNMP_RULES
-	__u16		i_ifcr;
+	__u16		i_ifcr;	/* translated interface numbers*/
 	__u16		o_ifcr;
 #endif
 	__u8		s_mask;
 	__u8		d_mask;
 	__u8		tcp_flags; /* `OR' of all tcp flags */
+	__u8		flowEndReason;
 #ifdef ENABLE_DIRECTION
 	__u8		hooknumx; /* hooknum + 1 */
 #endif
@@ -362,8 +377,7 @@ static inline int ipt_netflow_tuple_equal(const struct ipt_netflow_tuple *t1,
 struct ipt_netflow_sock {
 	struct list_head list;
 	struct socket *sock;
-	__be32 ipaddr;			// destination
-	unsigned short port;
+	struct sockaddr_storage addr;	// destination
 	atomic_t wmem_peak;		// sk_wmem_alloc peak value
 	unsigned int err_connect;	// connect errors
 	unsigned int err_full;		// socket filled error
@@ -446,9 +460,6 @@ struct ipt_netflow_stat {
 	unsigned int frags;		// packets stat (drop)
 	unsigned int maxflows_err;	// maxflows reached (drop)
 	unsigned int alloc_err;		// failed to allocate memory (drop & lost)
-#ifdef ENABLE_DEBUGFS
-	unsigned int freeze_err;	// freeze errors (drop)
-#endif
 	struct duration drop;
 	unsigned int send_success;	// sendmsg() ok
 	unsigned int send_failed;	// sendmsg() failed
@@ -477,11 +488,6 @@ struct ipt_netflow_stat {
 	u64 old_notfound;
 	int metric;			// one minute ewma of hash efficiency
 };
-
-#ifndef list_first_entry
-#define list_first_entry(ptr, type, member) \
-	list_entry((ptr)->next, type, member)
-#endif
 
 #endif
 /* vim: set sw=8: */

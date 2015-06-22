@@ -1,18 +1,18 @@
 diff --git a/Makefile.in b/Makefile.in
-index 9d9c9cd..e980b1a 100644
+index 968e578..abcb97c 100644
 --- a/Makefile.in
 +++ b/Makefile.in
 @@ -19,11 +19,11 @@ ccflags-y = @KOPTS@
  
  all: ipt_NETFLOW.ko libipt_NETFLOW.so libip6t_NETFLOW.so @SNMPTARGET@
  
--ipt_NETFLOW.ko: version.h ipt_NETFLOW.c ipt_NETFLOW.h Makefile
-+ipt_NETFLOW.ko: version.h ipt_NETFLOW.c ipt_NETFLOW.h
+-ipt_NETFLOW.ko: version.h ipt_NETFLOW.c ipt_NETFLOW.h compat.h Makefile
++ipt_NETFLOW.ko: version.h ipt_NETFLOW.c ipt_NETFLOW.h compat.h
  	@echo Compiling for kernel $(KVERSION)
  	make -C $(KDIR) M=$(CURDIR) modules CONFIG_DEBUG_INFO=y
  	@touch $@
--sparse: | version.h ipt_NETFLOW.c ipt_NETFLOW.h Makefile
-+sparse: | version.h ipt_NETFLOW.c ipt_NETFLOW.h
+-sparse: | version.h ipt_NETFLOW.c ipt_NETFLOW.h compat.h Makefile
++sparse: | version.h ipt_NETFLOW.c ipt_NETFLOW.h compat.h
  	@rm -f ipt_NETFLOW.ko ipt_NETFLOW.o
  	@echo Compiling for kernel $(KVERSION)
  	make -C $(KDIR) M=$(CURDIR) modules C=1
@@ -20,8 +20,8 @@ index 9d9c9cd..e980b1a 100644
  %.so: %_sh.o
  	gcc -shared -o $@ $<
  
--version.h: ipt_NETFLOW.c ipt_NETFLOW.h Makefile
-+version.h: ipt_NETFLOW.c ipt_NETFLOW.h
+-version.h: ipt_NETFLOW.c ipt_NETFLOW.h compat.h Makefile
++version.h: ipt_NETFLOW.c ipt_NETFLOW.h compat.h
  	@./version.sh --define > version.h
  
  linstall: | libipt_NETFLOW.so libip6t_NETFLOW.so

@@ -1,8 +1,8 @@
 diff --git a/configure b/configure
-index 30a928c..3647ce5 100755
+index c6c5593..bec8428 100755
 --- a/configure
 +++ b/configure
-@@ -536,13 +536,8 @@ dkms_check() {
+@@ -553,13 +553,8 @@ dkms_check() {
    fi
  }
  

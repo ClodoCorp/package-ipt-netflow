@@ -1,5 +1,5 @@
 PACKAGE_NAME="ipt_NETFLOW"
-PACKAGE_VERSION="2.1"
+PACKAGE_VERSION="2.1+commit8ef0119f1c"
 CLEAN="make clean"
 MAKE[0]="make CFLAGS="-UCONFIG_NF_NAT_NEEDED"  ipt_NETFLOW.ko KVERSION=$kernelver KDIR=/lib/modules/$kernelver/build"
 BUILT_MODULE_NAME[0]="ipt_NETFLOW"
